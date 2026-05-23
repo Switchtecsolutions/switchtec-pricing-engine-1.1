@@ -1,0 +1,59 @@
+Switchtec Pricing Engine - Web/PWA GitHub Upload Checklist
+
+Upload these files and folders to GitHub for the fresh Vercel/PWA deployment:
+
+- src/
+- public/
+- electron/
+- index.html
+- package.json
+- package-lock.json
+- vite.config.ts
+- tailwind.config.js
+- postcss.config.js
+- tsconfig.json
+- tsconfig.node.json
+- vercel.json
+- netlify.toml
+- electron-builder.json
+- README.md
+- .gitignore
+- WEB_DEPLOY_UPLOAD_CHECKLIST.txt
+
+PWA/iPhone files that must be present inside public/:
+
+- public/manifest.webmanifest
+- public/service-worker.js
+- public/icons/icon-192.png
+- public/icons/icon-512.png
+- public/icons/apple-touch-icon.png
+- public/switchtec-logo.png
+
+Do NOT upload these generated/local files:
+
+- node_modules/
+- dist/
+- dist-electron/
+- .vite/
+- .vite-temp/
+- Switchtec-Pricing-Engine-*.zip
+- Switchtec-Pricing-Engine-Release-*/
+- *.log
+- *.err
+- *.out
+- *.tsbuildinfo
+- web-final-*.png
+
+Vercel settings:
+
+- Framework preset: Vite
+- Build command: npm run build
+- Output directory: dist
+- Install command: npm install
+
+Recommended deployment path:
+
+1. Create a new clean GitHub repository or replace the old repository contents with only the files/folders listed above.
+2. Create a new Vercel project from that clean repository so the old broken deployment cannot reuse stale files.
+3. Use the Vite preset, build command npm run build, and output directory dist.
+4. After deployment, open the live URL and confirm the modern Switchtec styling is visible before sharing the link.

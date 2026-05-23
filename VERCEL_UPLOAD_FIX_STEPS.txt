@@ -1,0 +1,41 @@
+Vercel build fix: src/main.tsx missing
+
+The Vercel error:
+
+Failed to resolve /src/main.tsx from /vercel/path0/index.html
+
+means the GitHub repository root contains index.html, but does not contain:
+
+src/main.tsx
+
+To fix it:
+
+1. Use the ZIP named Switchtec-Pricing-Engine-WEB-PWA-FINAL-ROOT.zip.
+2. Extract the ZIP.
+3. Upload the extracted contents directly into the GitHub repository root.
+4. After upload, GitHub must show these paths at the top level:
+
+   index.html
+   package.json
+   src/main.tsx
+   src/App.tsx
+   src/index.css
+   src/tailwind.generated.css
+   public/manifest.webmanifest
+   public/icons/apple-touch-icon.png
+
+5. Do not upload the ZIP file itself.
+6. Do not upload only index.html and package.json.
+7. Do not upload a parent folder if Vercel is configured to build from the repository root.
+
+Vercel settings:
+
+- Framework preset: Vite
+- Build command: npm run build
+- Output directory: dist
+
+If Vercel still shows the same error, open the GitHub repository and confirm you can click:
+
+src/main.tsx
+
+from the repository root.

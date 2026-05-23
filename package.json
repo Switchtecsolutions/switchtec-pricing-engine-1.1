@@ -1,0 +1,37 @@
+{
+  "name": "switchtec-pricing-engine",
+  "private": true,
+  "version": "1.0.1",
+  "description": "Switchtec Electrical & Solar Solutions pricing engine.",
+  "author": "Switchtec Electrical & Solar Solutions",
+  "type": "module",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "node electron/dev.mjs",
+    "electron:build": "npm run build && electron-builder --win nsis portable --config electron-builder.json",
+    "dist": "npm run electron:build"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.20",
+    "electron": "^42.2.0",
+    "electron-builder": "^26.8.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
+}
