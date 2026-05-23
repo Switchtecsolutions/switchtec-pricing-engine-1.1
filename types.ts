@@ -1,462 +1,255 @@
-import { useMemo, useState } from "react";
 import defaultPricing from "./config/pricing.json";
-import seededSupplierProducts from "./data/supplierProducts.json";
-import { Header } from "./components/Header";
-import { PricingCalculator } from "./components/PricingCalculator";
-import { QuoteSummary } from "./components/QuoteSummary";
-import { Sidebar } from "./components/Sidebar";
-import { ClientQuote } from "./components/ClientQuote";
-import { SettingsPage } from "./components/SettingsPage";
-import { SavedQuotes } from "./components/SavedQuotes";
-import { calculateQuote } from "./utils/pricing";
-import { manualQuoteProducts, mergeDefaultManualInverters } from "./utils/manualProducts";
-import { getNormalizedCategory, reclassifySupplierProduct } from "./utils/supplierProducts";
-import { loadLocal, saveLocal } from "./utils/storage";
-import { todayIso } from "./utils/format";
-import type { ManualInverterProduct, PricingConfig, QuoteInput, SavedQuote, SupplierProduct } from "./types";
 
-export type View = "calculator" | "quote" | "settings" | "saved";
+export type RoofType = "Tin" | "Tile" | "Klip Lok";
+export type Phase = "Single Phase" | "3 Phase";
+export type InverterType = keyof typeof defaultPricing.invertersByType;
+export type InverterBrand = keyof typeof defaultPricing.invertersByType["Hybrid inverter"]["Single Phase"];
+export type InverterSize = keyof typeof defaultPricing.invertersByType["Hybrid inverter"]["Single Phase"]["FoxESS"];
+export type PanelName = string;
+export type BatteryName = string;
+export type MarginMode = "Preset percentage" | "Manual percentage" | "Manual dollar amount";
+export type SupplierPhase = "Single Phase" | "3 Phase" | "Unknown";
+export type SupplierInverterType = "Grid" | "Hybrid" | "Unknown";
+export type NormalizedCategory =
+  | "Panel"
+  | "Battery"
+  | "Battery Accessory"
+  | "Hybrid Inverter"
+  | "Grid Inverter"
+  | "System Accessory"
+  | "Mounting"
+  | "Rail"
+  | "Tin Kit"
+  | "Tile Kit"
+  | "Klip Lok Kit"
+  | "Meter"
+  | "Smart Meter"
+  | "CT"
+  | "Gateway"
+  | "Backup Gateway"
+  | "Backup Box"
+  | "Backup Interface"
+  | "Dongle / WiFi / Comms"
+  | "Monitoring"
+  | "Controller"
+  | "Energy Controller"
+  | "Battery Base"
+  | "Battery Bracket"
+  | "Battery Cable"
+  | "Optimiser"
+  | "Mounting Accessory"
+  | "Changeover Switch"
+  | "Deck Tite"
+  | "Isolator"
+  | "Breaker"
+  | "Cable"
+  | "Label Kit"
+  | "EV Charger"
+  | "Miscellaneous"
+  | "Unclassified"
+  | "Other";
+export type UnitType = "single" | "pallet" | "pack" | "carton" | "bundle" | "unknown";
+export type AvailabilityStatus = "active" | "inactive" | "discontinued" | "clearance" | "unknown";
+export type StockStatus = "in_stock" | "out_of_stock" | "unknown";
 
-const SETTINGS_KEY = "switchtec-pricing-settings";
-const QUOTES_KEY = "switchtec-saved-quotes";
-const SUPPLIER_PRODUCTS_KEY = "switchtec-supplier-products";
-const seededSupplierProductList = seededSupplierProducts as SupplierProduct[];
+export type PricingConfig = typeof defaultPricing;
 
-const supplierKey = (product: SupplierProduct) =>
-  `${product.supplier.toLowerCase()}::${(product.sku || product.supplierPartNumber || product.tradezonePartNumber || product.id).toLowerCase()}`;
+export interface ManualPanelProduct {
+  id?: string;
+  name: string;
+  brand?: string;
+  watt: number;
+  price: number;
+  active?: boolean;
+}
 
-const manualOverrideFields = (product?: SupplierProduct) => ({
-  hidden: product?.hidden,
-  manualOverridePriceExGst: product?.manualOverridePriceExGst,
-  manualNormalizedCategory: product?.manualNormalizedCategory,
-  manualUnitType: product?.manualUnitType,
-  manualShowInPanelDropdown: product?.manualShowInPanelDropdown,
-  manualAvailabilityStatus: product?.manualAvailabilityStatus,
-  manualShowInQuoting: product?.manualShowInQuoting,
-  manualTradezoneWebsiteQuotable: product?.manualTradezoneWebsiteQuotable,
-  manualProductName: product?.manualProductName,
-  compatibleBrand: product?.compatibleBrand,
-  stockStatus: product?.stockStatus,
-  notes: product?.notes
-});
+export interface ManualBatteryProduct {
+  id?: string;
+  name: string;
+  brand?: string;
+  kWh: number;
+  price: number;
+  active?: boolean;
+}
 
-const mergeSupplierProducts = (seeded: SupplierProduct[], local: SupplierProduct[], config: PricingConfig) => {
-  const merged = new Map<string, SupplierProduct>();
-  seeded.forEach((product) => {
-    merged.set(supplierKey(product), reclassifySupplierProduct(product, config.approvedTradezoneBrands));
-  });
-  local.forEach((product) => {
-    const key = supplierKey(product);
-    const seededProduct = merged.get(key);
-    merged.set(
-      key,
-      reclassifySupplierProduct(
-        seededProduct
-          ? {
-              ...seededProduct,
-              ...manualOverrideFields(product),
-              compatibleBrand: product.compatibleBrand ?? seededProduct.compatibleBrand
-            }
-          : product,
-        config.approvedTradezoneBrands
-      )
-    );
-  });
-  return Array.from(merged.values());
-};
+export interface ManualAccessoryProduct {
+  id: string;
+  name: string;
+  brand: string;
+  category: NormalizedCategory | string;
+  description: string;
+  sku: string;
+  price: number;
+  defaultQuantity: number;
+  active?: boolean;
+}
 
-const hasLocalSupplierOverride = (product: SupplierProduct, seededProduct?: SupplierProduct) =>
-  !seededProduct ||
-  product.hidden !== seededProduct.hidden ||
-  product.manualOverridePriceExGst !== undefined ||
-  product.manualNormalizedCategory !== undefined ||
-  product.manualUnitType !== undefined ||
-  product.manualShowInPanelDropdown !== undefined ||
-  product.manualAvailabilityStatus !== undefined ||
-  product.manualShowInQuoting !== undefined ||
-  product.manualTradezoneWebsiteQuotable !== undefined ||
-  product.manualProductName !== undefined ||
-  product.stockStatus !== seededProduct.stockStatus ||
-  (product.notes ?? "") !== (seededProduct.notes ?? "") ||
-  (product.compatibleBrand ?? "") !== (seededProduct.compatibleBrand ?? "");
+export interface ManualInverterProduct {
+  id: string;
+  type: InverterType;
+  phase: Phase;
+  brand: string;
+  model: string;
+  sizeKw: number;
+  price: number;
+  active?: boolean;
+}
 
-const localSupplierProductsToPersist = (products: SupplierProduct[], seeded: SupplierProduct[]) => {
-  const seededByKey = new Map(seeded.map((product) => [supplierKey(product), product]));
-  return products.filter((product) => hasLocalSupplierOverride(product, seededByKey.get(supplierKey(product))));
-};
+export interface SupplierProduct {
+  id: string;
+  supplier: string;
+  tradezonePartNumber?: string;
+  supplierPartNumber?: string;
+  sku: string;
+  brand: string;
+  model: string;
+  productName?: string;
+  manualProductName?: string;
+  description: string;
+  category: string;
+  rawCategory?: string;
+  normalizedCategory?: NormalizedCategory;
+  manualNormalizedCategory?: NormalizedCategory;
+  subCategory: string;
+  priceExGst: number;
+  priceIncGst: number;
+  gstRate: number;
+  manufacturer: string;
+  wattage?: number;
+  sizeKw?: number;
+  batteryKwh?: number;
+  phase?: SupplierPhase;
+  inverterType?: SupplierInverterType;
+  compatibleBrand?: string;
+  isAccessory?: boolean;
+  isBatteryAccessory?: boolean;
+  defaultQuantity?: number;
+  unitType?: UnitType;
+  manualUnitType?: UnitType;
+  showInPanelDropdown?: boolean;
+  manualShowInPanelDropdown?: boolean;
+  availabilityStatus?: AvailabilityStatus;
+  manualAvailabilityStatus?: AvailabilityStatus;
+  showInQuoting?: boolean;
+  manualShowInQuoting?: boolean;
+  tradezoneWebsiteQuotable?: boolean;
+  manualTradezoneWebsiteQuotable?: boolean;
+  notQuotableReason?: string;
+  hidden?: boolean;
+  manualOverridePriceExGst?: number;
+  notes?: string;
+  stock?: string;
+  stockQuantity?: number;
+  stockStatus?: StockStatus;
+  needsReview?: boolean;
+  sourcePage?: number;
+  sourceInfo?: string;
+  lastUpdated: string;
+}
 
-const persistSupplierProducts = (products: SupplierProduct[]) => {
-  const localProducts = localSupplierProductsToPersist(products, seededSupplierProductList);
-  try {
-    saveLocal(SUPPLIER_PRODUCTS_KEY, localProducts);
-    return products;
-  } catch {
-    const quoteRelevantProducts = localProducts.filter((product) => getNormalizedCategory(product) !== "Other");
-    try {
-      saveLocal(SUPPLIER_PRODUCTS_KEY, quoteRelevantProducts);
-    } catch {
-      saveLocal(SUPPLIER_PRODUCTS_KEY, []);
-    }
-    return products;
-  }
-};
+export interface SelectedAccessory {
+  id?: string;
+  productId: string;
+  quantity: number;
+  type?: "System" | "Misc";
+  unitPriceOverrideExGst?: number;
+  supplier?: string;
+  sku?: string;
+  name?: string;
+  brand?: string;
+  qty?: number;
+  unitPriceExGst?: number;
+  lineTotalExGst?: number;
+  stockStatus?: StockStatus;
+  category?: string;
+}
 
-const createQuoteInput = (config: PricingConfig): QuoteInput => ({
-  id: crypto.randomUUID(),
-  name: "Residential Solar + Battery Quote",
-  clientName: "",
-  address: "",
-  postcode: "2000",
-  solarSizeKw: 13,
-  panelName: config.panels[0].name,
-  batteryName: config.batteries[0].name,
-  batteryModules: 4,
-  stcPrice: config.solarStc.price,
-  roofType: "Tin",
-  phase: "Single Phase",
-  inverterType: "Hybrid inverter",
-  inverterBrand: "FoxESS",
-  inverterSize: "10kW",
-  panelProductId: "",
-  batteryProductId: "",
-  inverterProductId: "",
-  selectedAccessories: [],
-  extraAmountExGst: 0,
-  extraNote: "",
-  notes: "",
-  createdAt: todayIso()
-});
+export interface QuoteInput {
+  id: string;
+  name: string;
+  clientName: string;
+  address: string;
+  postcode: string;
+  solarSizeKw: number;
+  panelName: PanelName;
+  batteryName: BatteryName;
+  batteryModules: number;
+  stcPrice: number;
+  roofType: RoofType;
+  phase: Phase;
+  inverterType: InverterType;
+  inverterBrand: InverterBrand;
+  inverterSize: InverterSize;
+  panelProductId: string;
+  batteryProductId: string;
+  inverterProductId: string;
+  selectedAccessories: SelectedAccessory[];
+  extraAmountExGst: number;
+  extraNote: string;
+  notes: string;
+  createdAt: string;
+}
 
-const brandFromManualName = (name = "") => {
-  const lower = name.toLowerCase();
-  if (lower.includes("jinko")) return "Jinko";
-  if (lower.includes("tcl")) return "TCL";
-  if (lower.includes("sungrow")) return "Sungrow";
-  if (lower.includes("sigenergy") || lower.includes("sigen")) return "Sigenergy";
-  if (lower.includes("solax")) return "SolaX";
-  if (lower.includes("goodwe")) return "GoodWe";
-  if (lower.includes("byd")) return "BYD";
-  if (lower.includes("fox")) return "FoxESS";
-  if (lower.includes("ja")) return "JA";
-  return "Manual";
-};
+export interface QuoteCalculations {
+  solarPanelCount: number;
+  rawPanelCount: number;
+  actualSolarKw: number;
+  batterySizeKwh: number;
+  solarHardwareCost: number;
+  batteryHardwareCost: number;
+  inverterHardwareCost: number;
+  accessoryTotalExGst: number;
+  tinKitCount: number;
+  tinKitCost: number;
+  tileKitCount: number;
+  tileKitCost: number;
+  railSetCount: number;
+  railCount: number;
+  railCost: number;
+  roofAddonCost: number;
+  mountingCost: number;
+  hardwareExGst: number;
+  hardwareGst: number;
+  hardwareIncGst: number;
+  totalHardwareExGst: number;
+  totalHardwareGst: number;
+  totalHardwareCost: number;
+  solarZoneRating: number;
+  solarDeemingYears: number;
+  solarStcPrice: number;
+  solarZoneLabel: string;
+  solarStcs: number;
+  solarRebate: number;
+  batteryStcPrice: number;
+  batteryStcs: number;
+  batteryRebate: number;
+  solarInstallExGst: number;
+  solarInstallIncGst: number;
+  batteryInstallExGst: number;
+  batteryInstallIncGst: number;
+  totalInstallExGst: number;
+  totalInstallIncGst: number;
+  installExGst: number;
+  installIncGst: number;
+  extrasExGst: number;
+  extrasIncGst: number;
+  marginExGst: number;
+  marginIncGst: number;
+  businessTotalExGst: number;
+  businessGst: number;
+  businessTotalIncGst: number;
+  totalGst: number;
+  priceBeforeRebatesIncGst: number;
+  installMargin: number;
+  finalSellPrice: number;
+  finalCustomerPriceIncGst: number;
+  fastWinPrice: number;
+  balancedPrice: number;
+  highMarginPrice: number;
+  quoteValidUntil: string;
+}
 
-const manualRowSlug = (value = "row") =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "row";
-
-const ensurePanelIds = (panels: PricingConfig["panels"]): PricingConfig["panels"] =>
-  panels.map((panel, index) => ({
-    ...panel,
-    id: panel.id ?? `manual-panel-${index}-${manualRowSlug(panel.name || panel.brand || "panel")}`
-  }));
-
-const ensureBatteryIds = (batteries: PricingConfig["batteries"]): PricingConfig["batteries"] =>
-  batteries.map((battery, index) => ({
-    ...battery,
-    id: battery.id ?? `manual-battery-${index}-${manualRowSlug(battery.name || battery.brand || "battery")}`
-  }));
-
-const legacyCq7BatteryNames: Record<string, string> = {
-  "FoxESS CQ7-M Master Module": "FoxESS CQ7-M",
-  "FoxESS CQ7-S Slave Module": "FoxESS CQ7-S"
-};
-
-const cq7DefaultBatteries = defaultPricing.batteries.filter(
-  (battery) => battery.name === "FoxESS CQ7-M" || battery.name === "FoxESS CQ7-S"
-) as PricingConfig["batteries"];
-
-const cq7DefaultByName = new Map(cq7DefaultBatteries.map((battery) => [battery.name, battery]));
-
-const canonicalBatteryName = (name: string) => legacyCq7BatteryNames[name] ?? name;
-
-const isOldCq7SeedPrice = (price: number) => price === 1262;
-
-const cq7Price = (battery: PricingConfig["batteries"][number], cq7Default: PricingConfig["batteries"][number]) => {
-  const price = Number(battery.price) || 0;
-  return price > 0 && !isOldCq7SeedPrice(price) ? price : cq7Default.price;
-};
-
-const mergeCq7BatteryDefaults = (batteries: PricingConfig["batteries"]): PricingConfig["batteries"] => {
-  const merged: PricingConfig["batteries"] = [];
-  const cq7Indexes = new Map<string, number>();
-
-  batteries.forEach((battery) => {
-    const name = canonicalBatteryName(battery.name);
-    const cq7Default = cq7DefaultByName.get(name);
-    if (!cq7Default) {
-      merged.push(battery);
-      return;
-    }
-
-    const normalizedBattery = {
-      ...cq7Default,
-      ...battery,
-      name,
-      brand: "FoxESS",
-      kWh: 6.96,
-      price: cq7Price(battery, cq7Default),
-      active: battery.active ?? true,
-      aliases: cq7Default.aliases,
-      notes: battery.notes ?? cq7Default.notes
-    };
-
-    const existingIndex = cq7Indexes.get(name);
-    if (existingIndex === undefined) {
-      cq7Indexes.set(name, merged.length);
-      merged.push(normalizedBattery);
-      return;
-    }
-
-    const existingBattery = merged[existingIndex];
-    merged[existingIndex] = {
-      ...normalizedBattery,
-      price: cq7Price(existingBattery, cq7Default)
-    };
-  });
-
-  cq7DefaultBatteries.forEach((battery) => {
-    if (!cq7Indexes.has(battery.name)) {
-      merged.push(battery);
-    }
-  });
-
-  return merged;
-};
-
-const normalizeConfig = (raw: Partial<PricingConfig>): PricingConfig => ({
-  ...defaultPricing,
-  ...(raw.panels?.length && raw.batteries?.[0]?.name === "No Battery" && raw.invertersByType ? raw : {}),
-  roofTypeAdders: { ...defaultPricing.roofTypeAdders, ...raw.roofTypeAdders },
-  phaseAdders: { ...defaultPricing.phaseAdders, ...raw.phaseAdders },
-  solarStc: {
-    ...defaultPricing.solarStc,
-    ...raw.solarStc,
-    price: Number(raw.solarStc?.price ?? raw.stcPrice ?? defaultPricing.solarStc.price),
-    deemingYears: Number(raw.solarStc?.deemingYears ?? defaultPricing.solarStc.deemingYears),
-    zoneRating: Number(raw.solarStc?.zoneRating ?? defaultPricing.solarStc.zoneRating),
-    zoneRatings: { ...defaultPricing.solarStc.zoneRatings, ...(raw.solarStc?.zoneRatings ?? {}) }
-  },
-  batteryStcPrice: Number(raw.batteryStcPrice ?? raw.stcPrice ?? defaultPricing.batteryStcPrice),
-  mounting: { ...defaultPricing.mounting, ...raw.mounting },
-  install: { ...defaultPricing.install, ...raw.install },
-  extras: { ...defaultPricing.extras, ...raw.extras },
-  margin: { ...defaultPricing.margin, ...raw.margin },
-  supplierSettings: { ...defaultPricing.supplierSettings, ...raw.supplierSettings },
-  invertersByType:
-    raw.panels?.length && raw.batteries?.[0]?.name === "No Battery" && raw.invertersByType
-      ? raw.invertersByType
-      : defaultPricing.invertersByType,
-  panels: ensurePanelIds(raw.panels?.length ? raw.panels : defaultPricing.panels).map((panel) => ({
-    ...panel,
-    brand: panel.brand ?? brandFromManualName(panel.name),
-    active: panel.active ?? true
-  })),
-  batteries: ensureBatteryIds(mergeCq7BatteryDefaults(raw.batteries?.[0]?.name === "No Battery" ? raw.batteries : defaultPricing.batteries)).map((battery) => ({
-    ...battery,
-    brand: battery.brand ?? (battery.name === "No Battery" ? "None" : brandFromManualName(battery.name)),
-    active: battery.name === "No Battery" ? true : battery.active ?? true
-  })),
-  manualAccessories: raw.manualAccessories ?? defaultPricing.manualAccessories,
-  manualInverters: mergeDefaultManualInverters(
-    raw.manualInverters ?? [],
-    (raw as Partial<PricingConfig> & { deletedManualInverterDefaultIds?: string[] }).deletedManualInverterDefaultIds ?? []
-  ) as PricingConfig["manualInverters"],
-  deletedManualInverterDefaultIds: (raw as Partial<PricingConfig> & { deletedManualInverterDefaultIds?: string[] }).deletedManualInverterDefaultIds ?? [],
-  approvedTradezoneBrands: raw.approvedTradezoneBrands?.length
-    ? raw.approvedTradezoneBrands
-    : defaultPricing.approvedTradezoneBrands
-});
-
-const normalizeQuote = (raw: Partial<QuoteInput>, config: PricingConfig): QuoteInput => {
-  const legacyBatteryNames: Record<string, string> = {
-    "FoxESS CQ module": "FoxESS CQ",
-    "FoxESS EQ module": "FoxESS EQ",
-    "FoxESS CQ": "FoxESS CQ",
-    "Sungrow SBR": "Sungrow 5kWh Module",
-    "Sungrow 5kWh module": "Sungrow 5kWh Module",
-    "SolaX Triple module": "SolaX Triple",
-    Sigenergy: "Sigenergy 8kWh",
-    "Sigenergy 8kWh unit": "Sigenergy 8kWh",
-    "BYD HVM module": "BYD HVM"
-  };
-  const base = { ...createQuoteInput(config), ...raw };
-  const batteryName = legacyBatteryNames[base.batteryName] ?? base.batteryName;
-  const panelName = config.panels.some((panel) => panel.name === base.panelName)
-    ? base.panelName
-    : config.panels[0].name;
-  const normalizedBatteryName = config.batteries.some((battery) => battery.name === batteryName)
-    ? batteryName
-    : config.batteries[0].name;
-  const phase = base.phase === "3 Phase" ? "3 Phase" : "Single Phase";
-  const inverterType =
-    base.inverterType && config.invertersByType[base.inverterType]
-      ? base.inverterType
-      : "Hybrid inverter";
-  const phaseInverters = config.invertersByType[inverterType][phase];
-  const manualInverterRows = (config.manualInverters as ManualInverterProduct[]).filter(
-    (item) => item.active !== false && item.type === inverterType && item.phase === phase
-  );
-  const availableInverterBrands = Array.from(
-    new Set([...Object.keys(phaseInverters), ...manualInverterRows.map((item) => item.brand)])
-  );
-  const inverterBrand = availableInverterBrands.includes(base.inverterBrand)
-    ? base.inverterBrand
-    : (availableInverterBrands[0] as QuoteInput["inverterBrand"]);
-  const manualInverterSizes = manualInverterRows
-    .filter((item) => item.brand === inverterBrand)
-    .map((item) => `${item.sizeKw}kW`);
-  const availableInverterSizes = Array.from(
-    new Set([...(phaseInverters[inverterBrand] ? Object.keys(phaseInverters[inverterBrand]) : []), ...manualInverterSizes])
-  );
-  const inverterSize = availableInverterSizes.includes(base.inverterSize)
-    ? base.inverterSize
-    : (availableInverterSizes[0] as QuoteInput["inverterSize"]);
-
-  return {
-    ...base,
-    phase,
-    inverterType,
-    panelName,
-    batteryName: normalizedBatteryName,
-    inverterBrand,
-    inverterSize,
-    panelProductId: base.panelProductId ?? "",
-    batteryProductId: base.batteryProductId ?? "",
-    inverterProductId: base.inverterProductId ?? "",
-    selectedAccessories: Array.isArray(base.selectedAccessories) ? base.selectedAccessories : [],
-    extraAmountExGst: Number(base.extraAmountExGst ?? 0),
-    extraNote: base.extraNote ?? "",
-    stcPrice: Number(base.stcPrice ?? config.solarStc.price)
-  };
-};
-
-export default function App() {
-  const [view, setView] = useState<View>("calculator");
-  const [config, setConfigState] = useState<PricingConfig>(() => {
-    const normalized = normalizeConfig(loadLocal<Partial<PricingConfig>>(SETTINGS_KEY, defaultPricing));
-    saveLocal(SETTINGS_KEY, normalized);
-    return normalized;
-  });
-  const [input, setInput] = useState<QuoteInput>(() =>
-    normalizeQuote(loadLocal<Partial<QuoteInput>>("switchtec-current-quote", createQuoteInput(config)), config)
-  );
-  const [savedQuotes, setSavedQuotes] = useState<SavedQuote[]>(() =>
-    loadLocal<SavedQuote[]>(QUOTES_KEY, [])
-  );
-  const [supplierProducts, setSupplierProductsState] = useState<SupplierProduct[]>(() =>
-    mergeSupplierProducts(
-      seededSupplierProductList,
-      loadLocal<SupplierProduct[]>(SUPPLIER_PRODUCTS_KEY, []),
-      config
-    )
-  );
-  const quoteProducts = useMemo(
-    () => [
-      ...manualQuoteProducts(config),
-      ...supplierProducts.filter((product) => product.supplier !== "Solar Juice")
-    ],
-    [config, supplierProducts]
-  );
-
-  const calculations = useMemo(
-    () => calculateQuote(input, config, quoteProducts),
-    [input, config, quoteProducts]
-  );
-
-  const updateInput = (patch: Partial<QuoteInput>) => {
-    const next = { ...input, ...patch };
-    if (
-      patch.inverterProductId === undefined &&
-      (patch.phase !== undefined ||
-        patch.inverterType !== undefined ||
-        patch.inverterBrand !== undefined ||
-        patch.inverterSize !== undefined)
-    ) {
-      next.inverterProductId = "";
-    }
-    setInput(next);
-    saveLocal("switchtec-current-quote", next);
-  };
-
-  const setConfig = (next: PricingConfig) => {
-    setConfigState(next);
-    saveLocal(SETTINGS_KEY, next);
-  };
-
-  const setSupplierProducts = (next: SupplierProduct[]) => {
-    setSupplierProductsState(persistSupplierProducts(next));
-  };
-
-  const saveQuote = () => {
-    const saved: SavedQuote = { input, calculations };
-    const next = [saved, ...savedQuotes.filter((quote) => quote.input.id !== input.id)];
-    setSavedQuotes(next);
-    saveLocal(QUOTES_KEY, next);
-  };
-
-  const openQuote = (quote: SavedQuote) => {
-    const normalized = normalizeQuote(quote.input, config);
-    setInput(normalized);
-    saveLocal("switchtec-current-quote", normalized);
-    setView("calculator");
-  };
-
-  const deleteQuote = (id: string) => {
-    const next = savedQuotes.filter((quote) => quote.input.id !== id);
-    setSavedQuotes(next);
-    saveLocal(QUOTES_KEY, next);
-  };
-
-  const exportPdf = () => {
-    setView("quote");
-    window.setTimeout(() => window.print(), 150);
-  };
-
-  return (
-    <div className="min-h-screen bg-[#F7F4EE] text-[#2D2D2D]">
-      <Sidebar view={view} setView={setView} />
-      <main className="lg:pl-72">
-        <div className="mx-auto max-w-[1680px] p-4 md:p-8 lg:p-10">
-          {view === "calculator" ? (
-            <>
-              <Header onSave={saveQuote} onExport={exportPdf} />
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
-                <PricingCalculator
-                  input={input}
-                  config={config}
-                  calculations={calculations}
-                  supplierProducts={quoteProducts}
-                  onChange={updateInput}
-                />
-                <QuoteSummary input={input} calculations={calculations} />
-              </div>
-            </>
-          ) : null}
-
-          {view === "quote" ? (
-            <div className="mx-auto max-w-5xl">
-              <Header onSave={saveQuote} onExport={exportPdf} />
-              <ClientQuote input={input} calculations={calculations} />
-            </div>
-          ) : null}
-
-          {view === "settings" ? (
-            <SettingsPage
-              config={config}
-              supplierProducts={supplierProducts}
-              onConfigChange={setConfig}
-              onSupplierProductsChange={setSupplierProducts}
-            />
-          ) : null}
-
-          {view === "saved" ? (
-            <SavedQuotes quotes={savedQuotes} onOpen={openQuote} onDelete={deleteQuote} />
-          ) : null}
-        </div>
-      </main>
-    </div>
-  );
+export interface SavedQuote {
+  input: QuoteInput;
+  calculations: QuoteCalculations;
 }
