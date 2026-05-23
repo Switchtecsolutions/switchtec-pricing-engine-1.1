@@ -1,0 +1,43 @@
+{
+  "appId": "com.switchtec.pricingengine",
+  "productName": "Switchtec Pricing Engine",
+  "executableName": "Switchtec Pricing Engine",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "win": {
+    "signAndEditExecutable": false,
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
+        "target": "portable",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  },
+  "nsis": {
+    "artifactName": "Switchtec-Pricing-Engine-Setup-${version}.${ext}",
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": false,
+    "deleteAppDataOnUninstall": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Switchtec Pricing Engine"
+  },
+  "portable": {
+    "artifactName": "Switchtec-Pricing-Engine-Portable-${version}.${ext}"
+  }
+}
