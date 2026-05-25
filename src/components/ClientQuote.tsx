@@ -9,7 +9,13 @@ interface ClientQuoteProps {
 
 export function ClientQuote({ input, calculations }: ClientQuoteProps) {
   const quoteDate = new Date(input.createdAt).toLocaleDateString("en-AU");
-  const hasBattery = input.batteryName !== "No Battery";
+  const batteryItems = input.selectedBatteryItems ?? [];
+  const hasBattery = batteryItems.length > 0 || calculations.batterySizeKwh > 0;
+  const batterySummary = hasBattery
+    ? batteryItems.length
+      ? batteryItems.map((item) => `${item.qty} x ${item.name}`).join(", ")
+      : input.batteryName
+    : "No battery selected";
 
   return (
     <div className="quote-page overflow-hidden rounded-3xl border border-switchtec-line/70 bg-[#fffdf8] shadow-soft print:rounded-none print:border-0 print:shadow-none">
@@ -121,7 +127,7 @@ export function ClientQuote({ input, calculations }: ClientQuoteProps) {
               <Line label="Phase" value={input.phase} />
               <Line label="Panel" value={input.panelName} />
               <Line label="Panel count" value={`${calculations.solarPanelCount} panels`} />
-              <Line label="Battery" value={input.batteryName} />
+              <Line label="Battery" value={batterySummary} />
               <Line
                 label="Battery capacity"
                 value={hasBattery ? `${number1(calculations.batterySizeKwh)} kWh` : "No battery selected"}

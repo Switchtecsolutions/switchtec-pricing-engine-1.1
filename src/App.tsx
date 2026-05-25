@@ -13,7 +13,7 @@ import { manualQuoteProducts, mergeDefaultManualInverters } from "./utils/manual
 import { getNormalizedCategory, reclassifySupplierProduct } from "./utils/supplierProducts";
 import { loadLocal, saveLocal } from "./utils/storage";
 import { todayIso } from "./utils/format";
-import type { ManualInverterProduct, PricingConfig, QuoteInput, SavedQuote, SupplierProduct } from "./types";
+import type { ManualInverterProduct, PricingConfig, QuoteInput, SavedQuote, SelectedBatteryItem, SupplierProduct } from "./types";
 
 export type View = "calculator" | "quote" | "settings" | "saved";
 
@@ -110,7 +110,8 @@ const createQuoteInput = (config: PricingConfig): QuoteInput => ({
   solarSizeKw: 13,
   panelName: config.panels[0].name,
   batteryName: config.batteries[0].name,
-  batteryModules: 4,
+  batteryModules: 0,
+  selectedBatteryItems: [],
   stcPrice: config.solarStc.price,
   roofType: "Tin",
   phase: "Single Phase",
@@ -164,48 +165,57 @@ const legacyCq7BatteryNames: Record<string, string> = {
   "FoxESS CQ7-S Slave Module": "FoxESS CQ7-S"
 };
 
-const cq7DefaultBatteries = defaultPricing.batteries.filter(
-  (battery) => battery.name === "FoxESS CQ7-M" || battery.name === "FoxESS CQ7-S"
+const requiredFoxBatteryNames = new Set([
+  "FoxESS CQ7-M",
+  "FoxESS CQ7-S",
+  "FoxESS CQ6-M",
+  "FoxESS CQ6-S",
+  "FoxESS EQ4800-M",
+  "FoxESS EQ4800-S"
+]);
+
+const requiredFoxDefaultBatteries = defaultPricing.batteries.filter((battery) =>
+  requiredFoxBatteryNames.has(battery.name)
 ) as PricingConfig["batteries"];
 
-const cq7DefaultByName = new Map(cq7DefaultBatteries.map((battery) => [battery.name, battery]));
+const requiredFoxDefaultByName = new Map(requiredFoxDefaultBatteries.map((battery) => [battery.name, battery]));
 
 const canonicalBatteryName = (name: string) => legacyCq7BatteryNames[name] ?? name;
 
 const isOldCq7SeedPrice = (price: number) => price === 1262;
 
-const cq7Price = (battery: PricingConfig["batteries"][number], cq7Default: PricingConfig["batteries"][number]) => {
+const defaultBatteryPrice = (battery: PricingConfig["batteries"][number], batteryDefault: PricingConfig["batteries"][number]) => {
   const price = Number(battery.price) || 0;
-  return price > 0 && !isOldCq7SeedPrice(price) ? price : cq7Default.price;
+  return price > 0 && !isOldCq7SeedPrice(price) ? price : batteryDefault.price;
 };
 
-const mergeCq7BatteryDefaults = (batteries: PricingConfig["batteries"]): PricingConfig["batteries"] => {
+const mergeRequiredBatteryDefaults = (batteries: PricingConfig["batteries"]): PricingConfig["batteries"] => {
   const merged: PricingConfig["batteries"] = [];
-  const cq7Indexes = new Map<string, number>();
+  const requiredIndexes = new Map<string, number>();
 
   batteries.forEach((battery) => {
     const name = canonicalBatteryName(battery.name);
-    const cq7Default = cq7DefaultByName.get(name);
-    if (!cq7Default) {
+    const requiredDefault = requiredFoxDefaultByName.get(name);
+    if (!requiredDefault) {
       merged.push(battery);
       return;
     }
 
     const normalizedBattery = {
-      ...cq7Default,
+      ...requiredDefault,
       ...battery,
       name,
       brand: "FoxESS",
-      kWh: 6.96,
-      price: cq7Price(battery, cq7Default),
+      kWh: requiredDefault.kWh,
+      price: defaultBatteryPrice(battery, requiredDefault),
       active: battery.active ?? true,
-      aliases: cq7Default.aliases,
-      notes: battery.notes ?? cq7Default.notes
+      aliases: requiredDefault.aliases,
+      notes: battery.notes ?? requiredDefault.notes
     };
 
-    const existingIndex = cq7Indexes.get(name);
+    const existingIndex = requiredIndexes.get(name);
     if (existingIndex === undefined) {
-      cq7Indexes.set(name, merged.length);
+      requiredIndexes.set(name, merged.length);
       merged.push(normalizedBattery);
       return;
     }
@@ -213,12 +223,12 @@ const mergeCq7BatteryDefaults = (batteries: PricingConfig["batteries"]): Pricing
     const existingBattery = merged[existingIndex];
     merged[existingIndex] = {
       ...normalizedBattery,
-      price: cq7Price(existingBattery, cq7Default)
+      price: defaultBatteryPrice(existingBattery, requiredDefault)
     };
   });
 
-  cq7DefaultBatteries.forEach((battery) => {
-    if (!cq7Indexes.has(battery.name)) {
+  requiredFoxDefaultBatteries.forEach((battery) => {
+    if (!requiredIndexes.has(battery.name)) {
       merged.push(battery);
     }
   });
@@ -254,7 +264,7 @@ const normalizeConfig = (raw: Partial<PricingConfig>): PricingConfig => ({
     brand: panel.brand ?? brandFromManualName(panel.name),
     active: panel.active ?? true
   })),
-  batteries: ensureBatteryIds(mergeCq7BatteryDefaults(raw.batteries?.[0]?.name === "No Battery" ? raw.batteries : defaultPricing.batteries)).map((battery) => ({
+  batteries: ensureBatteryIds(mergeRequiredBatteryDefaults(raw.batteries?.[0]?.name === "No Battery" ? raw.batteries : defaultPricing.batteries)).map((battery) => ({
     ...battery,
     brand: battery.brand ?? (battery.name === "No Battery" ? "None" : brandFromManualName(battery.name)),
     active: battery.name === "No Battery" ? true : battery.active ?? true
@@ -290,6 +300,7 @@ const normalizeQuote = (raw: Partial<QuoteInput>, config: PricingConfig): QuoteI
   const normalizedBatteryName = config.batteries.some((battery) => battery.name === batteryName)
     ? batteryName
     : config.batteries[0].name;
+  const selectedBatteryItems = normalizeSelectedBatteryItems(base, config, normalizedBatteryName);
   const phase = base.phase === "3 Phase" ? "3 Phase" : "Single Phase";
   const inverterType =
     base.inverterType && config.invertersByType[base.inverterType]
@@ -321,6 +332,7 @@ const normalizeQuote = (raw: Partial<QuoteInput>, config: PricingConfig): QuoteI
     inverterType,
     panelName,
     batteryName: normalizedBatteryName,
+    selectedBatteryItems,
     inverterBrand,
     inverterSize,
     panelProductId: base.panelProductId ?? "",
@@ -332,6 +344,80 @@ const normalizeQuote = (raw: Partial<QuoteInput>, config: PricingConfig): QuoteI
     stcPrice: Number(base.stcPrice ?? config.solarStc.price)
   };
 };
+
+const normalizeSelectedBatteryItems = (
+  input: Partial<QuoteInput>,
+  config: PricingConfig,
+  normalizedBatteryName: string
+): SelectedBatteryItem[] => {
+  if (Array.isArray(input.selectedBatteryItems) && input.selectedBatteryItems.length) {
+    return input.selectedBatteryItems
+      .map((item, index) => normalizeBatteryLineItem(item, index))
+      .filter((item): item is SelectedBatteryItem => Boolean(item));
+  }
+
+  const modules = Math.max(0, Number(input.batteryModules) || 0);
+  if (!modules || normalizedBatteryName === "No Battery" || input.batteryProductId) return [];
+
+  const battery = config.batteries.find((item) => item.name === normalizedBatteryName);
+  if (!battery) return [];
+
+  return [
+    createBatteryLineItem({
+      id: `legacy-battery-${manualRowSlug(battery.name)}-${modules}`,
+      productId: battery.id ?? battery.name,
+      brand: battery.brand ?? brandFromManualName(battery.name),
+      name: battery.name,
+      qty: modules,
+      kwhEach: Number(battery.kWh) || 0,
+      unitPriceExGst: Number(battery.price) || 0
+    })
+  ];
+};
+
+const normalizeBatteryLineItem = (item: Partial<SelectedBatteryItem>, index: number): SelectedBatteryItem | null => {
+  const qty = Math.max(1, Number(item.qty) || 1);
+  const kwhEach = Math.max(0, Number(item.kwhEach) || 0);
+  const unitPriceExGst = Math.max(0, Number(item.unitPriceExGst) || 0);
+  const name = item.name || "Battery item";
+  return createBatteryLineItem({
+    id: item.id || `battery-line-${index}-${manualRowSlug(name)}`,
+    productId: item.productId || item.id || name,
+    brand: item.brand || brandFromManualName(name),
+    name,
+    qty,
+    kwhEach,
+    unitPriceExGst
+  });
+};
+
+const createBatteryLineItem = ({
+  id,
+  productId,
+  brand,
+  name,
+  qty,
+  kwhEach,
+  unitPriceExGst
+}: {
+  id: string;
+  productId: string;
+  brand: string;
+  name: string;
+  qty: number;
+  kwhEach: number;
+  unitPriceExGst: number;
+}): SelectedBatteryItem => ({
+  id,
+  productId,
+  brand,
+  name,
+  qty,
+  kwhEach,
+  unitPriceExGst,
+  lineTotalKwh: qty * kwhEach,
+  lineTotalExGst: qty * unitPriceExGst
+});
 
 export default function App() {
   const [view, setView] = useState<View>("calculator");

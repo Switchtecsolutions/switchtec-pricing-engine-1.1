@@ -14,14 +14,12 @@ import {
   isPanelDropdownProduct,
   isProductSelectableForQuote,
   normalizeSearchText,
-  batteryProductLabel,
   productLabel,
   stockLabel,
   stockSortRank,
   supplierProductSearchText
 } from "../utils/supplierProducts";
 import type {
-  BatteryName,
   InverterBrand,
   InverterSize,
   InverterType,
@@ -31,6 +29,7 @@ import type {
   QuoteCalculations,
   QuoteInput,
   RoofType,
+  SelectedBatteryItem,
   SupplierProduct
 } from "../types";
 
@@ -45,11 +44,25 @@ interface PricingCalculatorProps {
 const roofTypes: RoofType[] = ["Tin", "Klip Lok", "Tile"];
 const phases: Phase[] = ["Single Phase", "3 Phase"];
 const inverterTypes: InverterType[] = ["Hybrid inverter", "Grid inverter"];
-const modules = Array.from({ length: 12 }, (_, index) => index + 1);
+
+type BatterySelectionProduct = {
+  value: string;
+  productId: string;
+  supplier: string;
+  brand: string;
+  name: string;
+  kwhEach: number;
+  unitPriceExGst: number;
+  searchText: string;
+};
 
 export function PricingCalculator({ input, config, calculations, supplierProducts, onChange }: PricingCalculatorProps) {
   const [panelBrandFilter, setPanelBrandFilter] = useState("");
   const [batteryBrandFilter, setBatteryBrandFilter] = useState("");
+  const [batteryProductValue, setBatteryProductValue] = useState("");
+  const [selectedBatteryProduct, setSelectedBatteryProduct] = useState<BatterySelectionProduct | null>(null);
+  const [batteryQuantity, setBatteryQuantity] = useState(1);
+  const [batteryValidation, setBatteryValidation] = useState("");
   const [accessoryBrandFilter, setAccessoryBrandFilter] = useState("");
   const [accessoryProductId, setAccessoryProductId] = useState("");
   const [selectedAccessoryProduct, setSelectedAccessoryProduct] = useState<SupplierProduct | null>(null);
@@ -60,13 +73,8 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
   const activeProducts = supplierProducts.filter((product) => isProductSelectableForQuote(product, approvedBrands));
   const manualPanels = activeManualPanels(config);
   const manualBatteries = activeManualBatteries(config);
-  const selectedBatteryProduct = unhiddenProducts.find((product) => product.id === input.batteryProductId);
   const selectedInverterProduct = unhiddenProducts.find((product) => product.id === input.inverterProductId);
-  const selectedBattery =
-    selectedBatteryProduct ??
-    config.batteries.find((battery) => battery.name === input.batteryName) ??
-    config.batteries[0];
-  const hasBattery = Boolean(input.batteryProductId) || input.batteryName !== "No Battery";
+  const selectedBatteryItems = input.selectedBatteryItems ?? [];
   const inverterTable =
     config.invertersByType[input.inverterType]?.[input.phase] ??
     config.invertersByType["Hybrid inverter"]["Single Phase"];
@@ -85,11 +93,36 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
   const manualPanelOptions = manualPanels.filter((panel) => brandFilterMatches(`${panel.brand ?? ""} ${panel.name}`, panelBrandFilter));
   const manualBatteryOptions = manualBatteries.filter(
     (battery) =>
-      battery.name === "No Battery" ||
+      battery.name !== "No Battery" &&
       brandFilterMatches(`${battery.brand ?? ""} ${battery.name} ${manualAliases(battery)}`, batteryBrandFilter)
   );
   const importedPanels = selectablePanels.filter((product) => brandMatchesProduct(product, panelBrandFilter));
   const importedBatteries = selectableBatteries.filter((product) => brandMatchesProduct(product, batteryBrandFilter));
+  const batteryProducts: BatterySelectionProduct[] = [
+    ...manualBatteryOptions.map((battery) => {
+      const brand = battery.brand || brandFromText(battery.name);
+      return {
+        value: `manual:${battery.id ?? battery.name}`,
+        productId: battery.id ?? battery.name,
+        supplier: "Manual",
+        brand,
+        name: battery.name,
+        kwhEach: Number(battery.kWh) || 0,
+        unitPriceExGst: Number(battery.price) || 0,
+        searchText: `manual ${brand} ${battery.name} ${manualAliases(battery)} ${battery.kWh} ${battery.price}`
+      };
+    }),
+    ...importedBatteries.map((battery) => ({
+      value: `supplier:${battery.id}`,
+      productId: battery.id,
+      supplier: battery.supplier,
+      brand: battery.brand || battery.manufacturer || brandFromText(battery.productName || battery.description),
+      name: battery.productName || battery.model || battery.description,
+      kwhEach: Number(battery.batteryKwh || battery.sizeKw) || 0,
+      unitPriceExGst: effectiveProductPrice(battery),
+      searchText: supplierProductSearchText(battery)
+    }))
+  ];
   const importedInverters = activeProducts.filter((product) => {
     const category = input.inverterType === "Hybrid inverter" ? "Hybrid Inverter" : "Grid Inverter";
     return supplierInverterMatches(product, category, input.phase, input.inverterBrand, selectedSizeKw);
@@ -157,7 +190,12 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
   ) as InverterSize[];
 
   const accessoryProducts = unhiddenProducts.filter((product) => {
-    const handledProductIds = new Set([input.panelProductId, input.batteryProductId, input.inverterProductId].filter(Boolean));
+    const handledProductIds = new Set([
+      input.panelProductId,
+      input.batteryProductId,
+      input.inverterProductId,
+      ...selectedBatteryItems.map((item) => item.productId)
+    ].filter(Boolean));
     return !handledProductIds.has(product.id) && isAccessorySearchProduct(product, approvedBrands);
   });
   const accessoryBrands = uniqueBrands(accessoryProducts.map((product) => product.brand || product.manufacturer || product.compatibleBrand));
@@ -200,6 +238,26 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
     setSelectedAccessoryProduct(null);
     setAccessoryQuantity(1);
     setAccessoryValidation("");
+  };
+
+  const addBatteryItem = () => {
+    if (!selectedBatteryProduct) {
+      setBatteryValidation("Select a battery product first.");
+      return;
+    }
+
+    const qty = Math.max(1, Number(batteryQuantity) || 1);
+    const lineItem = createBatteryLineItem(selectedBatteryProduct, qty);
+    onChange({
+      selectedBatteryItems: [...selectedBatteryItems, lineItem],
+      batteryName: lineItem.name,
+      batteryModules: qty,
+      batteryProductId: ""
+    });
+    setBatteryProductValue("");
+    setSelectedBatteryProduct(null);
+    setBatteryQuantity(1);
+    setBatteryValidation("");
   };
 
   return (
@@ -289,48 +347,55 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
               value={batteryBrandFilter || "__all"}
               placeholder="All battery brands"
               options={brandSelectOptions(batteryBrands)}
-              onChange={(value) => setBatteryBrandFilter(value === "__all" ? "" : value)}
-            />
-          </Field>
-          <Field label="Battery Type" hint={hasBattery ? `${batteryModuleKwh(selectedBattery)} kWh per module` : "Solar-only quote"}>
-            <SearchableSelect
-              value={input.batteryProductId ? `supplier:${input.batteryProductId}` : `manual:${input.batteryName}`}
-              placeholder="Search batteries by brand or model"
-              options={[
-                ...manualBatteryOptions.map((battery) => ({
-                  value: `manual:${battery.name}`,
-                  label:
-                    battery.name === "No Battery"
-                      ? "No Battery"
-                      : `Manual | ${battery.brand || "Battery"} | ${battery.name} | ${battery.kWh}kWh/module | ${money(battery.price)} ex GST`,
-                  searchText: `manual ${battery.brand || ""} ${battery.name} ${manualAliases(battery)} ${battery.kWh} ${battery.price}`
-                })),
-                ...importedBatteries.map((battery) => batteryProductOption(battery, "supplier:"))
-              ]}
               onChange={(value) => {
-                const [source, productValue] = value.split(":");
-                if (source === "supplier") {
-                  const product = activeProducts.find((item) => item.id === productValue);
-                  onChange({ batteryProductId: productValue, batteryName: product?.productName ?? product?.description ?? "Imported Battery" });
-                } else if (productValue) {
-                  onChange({ batteryProductId: "", batteryName: productValue as BatteryName });
-                } else {
-                  onChange({ batteryProductId: "" });
-                }
+                setBatteryBrandFilter(value === "__all" ? "" : value);
+                setBatteryProductValue("");
+                setSelectedBatteryProduct(null);
+                setBatteryValidation("");
               }}
             />
           </Field>
-          {hasBattery ? (
-            <Field label="Battery Modules">
-              <select className={selectClass} value={input.batteryModules} onChange={(e) => onChange({ batteryModules: Number(e.target.value) })}>
-                {modules.map((module) => (
-                  <option key={module} value={module}>
-                    {module}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null}
+          <Field label="Battery Product">
+            <SearchableSelect
+              value={batteryProductValue}
+              placeholder="Search batteries by brand or model"
+              options={batteryProducts.map((battery) => batterySelectionOption(battery))}
+              onChange={(value, option) => {
+                setBatteryProductValue(value);
+                setSelectedBatteryProduct((option?.data as BatterySelectionProduct | undefined) ?? batteryProducts.find((battery) => battery.value === value) ?? null);
+                setBatteryValidation("");
+              }}
+            />
+            {batteryValidation ? <p className="mt-2 text-sm font-semibold text-rose-600">{batteryValidation}</p> : null}
+          </Field>
+          <Field label="Quantity">
+            <input
+              className={inputClass}
+              type="number"
+              min={1}
+              value={batteryQuantity}
+              onChange={(event) => setBatteryQuantity(Math.max(1, Number(event.target.value) || 1))}
+            />
+          </Field>
+          <button
+            type="button"
+            className="mt-7 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-switchtec-forest px-5 text-sm font-semibold text-white shadow-panel transition hover:-translate-y-0.5 hover:bg-switchtec-green"
+            onClick={addBatteryItem}
+          >
+            <Plus size={17} />
+            Add Battery Item
+          </button>
+          <SelectedBatteryItemsTable
+            items={selectedBatteryItems}
+            onChange={(items) =>
+              onChange({
+                selectedBatteryItems: items,
+                batteryName: items[0]?.name ?? "No Battery",
+                batteryModules: items.reduce((total, item) => total + item.qty, 0),
+                batteryProductId: ""
+              })
+            }
+          />
         </InputGroup>
 
         <InputGroup title="Inverter Selection">
@@ -469,7 +534,7 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
           </div>
           <div>
             <h2 className="text-xl font-semibold text-switchtec-ink">Calculated System Summary</h2>
-            <p className="text-sm text-slate-500">Calculated from panel rounding and selected battery module.</p>
+            <p className="text-sm text-slate-500">Calculated from panel rounding and selected battery items.</p>
           </div>
         </div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -494,6 +559,107 @@ export function PricingCalculator({ input, config, calculations, supplierProduct
       </section>
     </div>
   );
+}
+
+function SelectedBatteryItemsTable({
+  items,
+  onChange
+}: {
+  items: SelectedBatteryItem[];
+  onChange: (items: SelectedBatteryItem[]) => void;
+}) {
+  if (!items.length) {
+    return (
+      <p className="rounded-2xl bg-[#F7F4EE] p-4 text-sm text-[#66756f] md:col-span-2 xl:col-span-3">
+        No battery selected
+      </p>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto md:col-span-2 xl:col-span-3">
+      <table className="w-full min-w-[900px] border-separate border-spacing-y-2 text-left text-sm">
+        <thead className="text-[#66756f]">
+          <tr>
+            <th className="px-3 py-2">Battery product</th>
+            <th className="px-3 py-2">Brand</th>
+            <th className="px-3 py-2">Qty</th>
+            <th className="px-3 py-2">kWh each</th>
+            <th className="px-3 py-2">Total kWh</th>
+            <th className="px-3 py-2">Unit price ex GST</th>
+            <th className="px-3 py-2">Line total ex GST</th>
+            <th className="px-3 py-2">Remove</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.id} className="bg-[#F7F4EE]">
+              <td className="rounded-l-xl px-3 py-3 font-semibold text-switchtec-ink">{item.name}</td>
+              <td className="px-3 py-3">{item.brand}</td>
+              <td className="px-3 py-3">
+                <input
+                  className={`${inputClass} h-10 w-24`}
+                  type="number"
+                  min={1}
+                  value={item.qty}
+                  onChange={(event) =>
+                    onChange(
+                      items.map((batteryItem) =>
+                        batteryItem.id === item.id
+                          ? updateBatteryLineQuantity(batteryItem, Number(event.target.value))
+                          : batteryItem
+                      )
+                    )
+                  }
+                />
+              </td>
+              <td className="px-3 py-3">{number1(item.kwhEach)} kWh</td>
+              <td className="px-3 py-3 font-semibold">{number1(item.lineTotalKwh)} kWh</td>
+              <td className="px-3 py-3">{money(item.unitPriceExGst)}</td>
+              <td className="px-3 py-3 font-semibold">{money(item.lineTotalExGst)}</td>
+              <td className="rounded-r-xl px-3 py-3">
+                <button
+                  type="button"
+                  className="grid h-10 w-10 place-items-center rounded-xl bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                  onClick={() => onChange(items.filter((batteryItem) => batteryItem.id !== item.id))}
+                  aria-label="Remove battery item"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function createBatteryLineItem(product: BatterySelectionProduct, qty: number): SelectedBatteryItem {
+  const quantity = Math.max(1, Number(qty) || 1);
+  const kwhEach = Math.max(0, Number(product.kwhEach) || 0);
+  const unitPriceExGst = Math.max(0, Number(product.unitPriceExGst) || 0);
+  return {
+    id: `battery-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    productId: product.productId,
+    brand: product.brand,
+    name: product.name,
+    qty: quantity,
+    kwhEach,
+    unitPriceExGst,
+    lineTotalKwh: quantity * kwhEach,
+    lineTotalExGst: quantity * unitPriceExGst
+  };
+}
+
+function updateBatteryLineQuantity(item: SelectedBatteryItem, qty: number): SelectedBatteryItem {
+  const quantity = Math.max(1, Number(qty) || 1);
+  return {
+    ...item,
+    qty: quantity,
+    lineTotalKwh: quantity * item.kwhEach,
+    lineTotalExGst: quantity * item.unitPriceExGst
+  };
 }
 
 function SelectedAccessoriesTable({
@@ -609,12 +775,14 @@ function productOption(product: SupplierProduct, valuePrefix = ""): SearchableOp
   };
 }
 
-function batteryProductOption(product: SupplierProduct, valuePrefix = ""): SearchableOption {
+function batterySelectionOption(product: BatterySelectionProduct): SearchableOption {
   return {
-    value: `${valuePrefix}${product.id}`,
-    label: batteryProductLabel(product),
-    searchText: supplierProductSearchText(product),
-    stockRank: stockSortRank(product),
+    value: product.value,
+    label:
+      product.supplier === "Manual"
+        ? `Manual | ${product.name} | ${number1(product.kwhEach)}kWh | ${money(product.unitPriceExGst)} ex GST`
+        : `${product.supplier} | ${product.brand || "Battery"} | ${product.name} | ${number1(product.kwhEach)}kWh | ${money(product.unitPriceExGst)} ex GST`,
+    searchText: product.searchText,
     data: product
   };
 }
@@ -751,9 +919,4 @@ function manualPanelLabel(name: string, brand = "", watt: number) {
 
 function manualAliases(item: { aliases?: string[] }) {
   return Array.isArray(item.aliases) ? item.aliases.join(" ") : "";
-}
-
-function batteryModuleKwh(battery: SupplierProduct | PricingConfig["batteries"][number]) {
-  if ("kWh" in battery) return battery.kWh;
-  return battery.batteryKwh ?? battery.sizeKw ?? 0;
 }

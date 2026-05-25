@@ -164,6 +164,18 @@ export interface SelectedAccessory {
   category?: string;
 }
 
+export interface SelectedBatteryItem {
+  id: string;
+  productId: string;
+  brand: string;
+  name: string;
+  qty: number;
+  kwhEach: number;
+  unitPriceExGst: number;
+  lineTotalKwh: number;
+  lineTotalExGst: number;
+}
+
 export interface QuoteInput {
   id: string;
   name: string;
@@ -174,6 +186,7 @@ export interface QuoteInput {
   panelName: PanelName;
   batteryName: BatteryName;
   batteryModules: number;
+  selectedBatteryItems: SelectedBatteryItem[];
   stcPrice: number;
   roofType: RoofType;
   phase: Phase;

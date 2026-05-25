@@ -79,6 +79,62 @@
       "priceConfidence": "likely"
     },
     {
+      "id": "default-battery-foxess-cq6-m",
+      "name": "FoxESS CQ6-M",
+      "brand": "FoxESS",
+      "kWh": 5.99,
+      "price": 1899,
+      "active": true,
+      "aliases": [
+        "CQ6",
+        "CQ6-M",
+        "FoxESS CQ6",
+        "5.99kWh"
+      ]
+    },
+    {
+      "id": "default-battery-foxess-cq6-s",
+      "name": "FoxESS CQ6-S",
+      "brand": "FoxESS",
+      "kWh": 5.99,
+      "price": 1799,
+      "active": true,
+      "aliases": [
+        "CQ6",
+        "CQ6-S",
+        "FoxESS CQ6",
+        "5.99kWh"
+      ]
+    },
+    {
+      "id": "default-battery-foxess-eq4800-m",
+      "name": "FoxESS EQ4800-M",
+      "brand": "FoxESS",
+      "kWh": 4.66,
+      "price": 1450,
+      "active": true,
+      "aliases": [
+        "EQ4800",
+        "EQ4800-M",
+        "FoxESS EQ",
+        "4.66kWh"
+      ]
+    },
+    {
+      "id": "default-battery-foxess-eq4800-s",
+      "name": "FoxESS EQ4800-S",
+      "brand": "FoxESS",
+      "kWh": 4.66,
+      "price": 1350,
+      "active": true,
+      "aliases": [
+        "EQ4800",
+        "EQ4800-S",
+        "FoxESS EQ",
+        "4.66kWh"
+      ]
+    },
+    {
       "id": "default-battery-sungrow-5kwh-module",
       "name": "Sungrow 5kWh Module",
       "brand": "Sungrow",

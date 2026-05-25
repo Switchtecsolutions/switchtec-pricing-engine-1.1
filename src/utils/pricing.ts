@@ -1,11 +1,9 @@
-import type { PricingConfig, QuoteCalculations, QuoteInput, SupplierProduct } from "../types";
+import type { PricingConfig, QuoteCalculations, QuoteInput, SelectedBatteryItem, SupplierProduct } from "../types";
 import { addDays } from "./format";
 import { effectiveProductPrice } from "./supplierProducts";
 
 export function calculateQuote(input: QuoteInput, config: PricingConfig, supplierProducts: SupplierProduct[] = []): QuoteCalculations {
   const requestedSolarKw = Math.max(0, Number(input.solarSizeKw) || 0);
-  const batterySelected = input.batteryName !== "No Battery" || Boolean(input.batteryProductId);
-  const modules = batterySelected ? Math.max(0, Number(input.batteryModules) || 0) : 0;
   const solarStcPrice = Math.max(0, Number(config.solarStc?.price ?? config.stcPrice) || 0);
   const solarZoneRating = Math.max(0, Number(config.solarStc?.zoneRating) || 0);
   const solarDeemingYears = Math.max(0, Number(config.solarStc?.deemingYears) || 0);
@@ -17,7 +15,6 @@ export function calculateQuote(input: QuoteInput, config: PricingConfig, supplie
 
   const supplierProduct = (id: string) => supplierProducts.find((product) => product.id === id && !product.hidden);
   const selectedPanelProduct = supplierProduct(input.panelProductId);
-  const selectedBatteryProduct = supplierProduct(input.batteryProductId);
   const selectedInverterProduct = supplierProduct(input.inverterProductId);
   const matchingManualInverterProduct = supplierProducts.find((product) => {
     if (product.supplier !== "Manual" || product.hidden || product.showInQuoting === false) return false;
@@ -39,19 +36,13 @@ export function calculateQuote(input: QuoteInput, config: PricingConfig, supplie
         price: effectiveProductPrice(selectedPanelProduct)
       }
     : manualPanel;
-  const manualBattery = config.batteries.find((item) => item.name === input.batteryName) ?? config.batteries[0];
-  const battery = selectedBatteryProduct
-    ? {
-        name: selectedBatteryProduct.description,
-        kWh: selectedBatteryProduct.batteryKwh || selectedBatteryProduct.sizeKw || manualBattery.kWh,
-        price: effectiveProductPrice(selectedBatteryProduct)
-      }
-    : manualBattery;
+  const batteryItems = resolveBatteryItems(input, config, supplierProducts);
+  const batterySelected = batteryItems.length > 0;
 
   const rawPanelCount = panel ? (requestedSolarKw * 1000) / panel.watt : 0;
   const solarPanelCount = panel ? Math.max(1, Math.round(rawPanelCount)) : 0;
   const actualSolarKw = panel ? (solarPanelCount * panel.watt) / 1000 : 0;
-  const batterySizeKwh = batterySelected && battery ? modules * battery.kWh : 0;
+  const batterySizeKwh = batteryItems.reduce((total, item) => total + item.lineTotalKwh, 0);
 
   const inverterTable =
     config.invertersByType[input.inverterType]?.[input.phase] ??
@@ -62,7 +53,7 @@ export function calculateQuote(input: QuoteInput, config: PricingConfig, supplie
       ? effectiveProductPrice(matchingManualInverterProduct)
     : inverterTable[input.inverterBrand]?.[input.inverterSize] ?? 0;
   const solarPanelsExGst = panel ? solarPanelCount * panel.price : 0;
-  const batteryExGst = batterySelected && battery ? modules * battery.price : 0;
+  const batteryExGst = batteryItems.reduce((total, item) => total + item.lineTotalExGst, 0);
   const accessoryTotalExGst = input.selectedAccessories.reduce((total, accessory) => {
     const product = supplierProduct(accessory.productId);
     if (!product) return total;
@@ -201,5 +192,56 @@ export function calculateQuote(input: QuoteInput, config: PricingConfig, supplie
     balancedPrice: finalCustomerPriceIncGst * config.balancedMultiplier,
     highMarginPrice: finalCustomerPriceIncGst * config.highMarginMultiplier,
     quoteValidUntil: addDays(input.createdAt, config.quoteValidityDays)
+  };
+}
+
+function resolveBatteryItems(
+  input: QuoteInput,
+  config: PricingConfig,
+  supplierProducts: SupplierProduct[]
+): SelectedBatteryItem[] {
+  if (Array.isArray(input.selectedBatteryItems) && input.selectedBatteryItems.length) {
+    return input.selectedBatteryItems.map(normalizeBatteryLineItem).filter((item) => item.qty > 0);
+  }
+
+  const legacyBatterySelected = input.batteryName !== "No Battery" || Boolean(input.batteryProductId);
+  const modules = legacyBatterySelected ? Math.max(0, Number(input.batteryModules) || 0) : 0;
+  if (!legacyBatterySelected || !modules) return [];
+
+  const supplierProduct = input.batteryProductId
+    ? supplierProducts.find((product) => product.id === input.batteryProductId && !product.hidden)
+    : undefined;
+  const manualBattery = config.batteries.find((item) => item.name === input.batteryName) ?? config.batteries[0];
+  const kwhEach = supplierProduct?.batteryKwh || supplierProduct?.sizeKw || manualBattery?.kWh || 0;
+  const unitPriceExGst = supplierProduct ? effectiveProductPrice(supplierProduct) : Number(manualBattery?.price) || 0;
+  const name = supplierProduct?.productName || supplierProduct?.description || manualBattery?.name || "Battery item";
+  const brand = supplierProduct?.brand || manualBattery?.brand || "";
+
+  return [
+    normalizeBatteryLineItem({
+      id: `legacy-battery-${input.batteryProductId || input.batteryName}`,
+      productId: input.batteryProductId || manualBattery?.id || input.batteryName,
+      brand,
+      name,
+      qty: modules,
+      kwhEach,
+      unitPriceExGst,
+      lineTotalKwh: modules * kwhEach,
+      lineTotalExGst: modules * unitPriceExGst
+    })
+  ];
+}
+
+function normalizeBatteryLineItem(item: SelectedBatteryItem): SelectedBatteryItem {
+  const qty = Math.max(0, Number(item.qty) || 0);
+  const kwhEach = Math.max(0, Number(item.kwhEach) || 0);
+  const unitPriceExGst = Math.max(0, Number(item.unitPriceExGst) || 0);
+  return {
+    ...item,
+    qty,
+    kwhEach,
+    unitPriceExGst,
+    lineTotalKwh: qty * kwhEach,
+    lineTotalExGst: qty * unitPriceExGst
   };
 }

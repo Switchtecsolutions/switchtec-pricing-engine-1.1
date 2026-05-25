@@ -9,6 +9,13 @@ interface QuoteSummaryProps {
 }
 
 export function QuoteSummary({ input, calculations }: QuoteSummaryProps) {
+  const batteryItems = input.selectedBatteryItems ?? [];
+  const batterySummary = batteryItems.length
+    ? batteryItems.map((item) => `${item.qty} x ${item.name}`).join(", ")
+    : calculations.batterySizeKwh > 0
+      ? input.batteryName
+      : "No battery selected";
+
   return (
     <aside className="space-y-5 lg:sticky lg:top-8">
       <div className="rounded-3xl bg-switchtec-forest p-7 text-white shadow-soft">
@@ -64,8 +71,7 @@ export function QuoteSummary({ input, calculations }: QuoteSummaryProps) {
           <Row label="Panel type" value={input.panelName} />
           <Row label="Panel count" value={`${calculations.solarPanelCount} panels`} />
           <Row label="Actual installed kW" value={`${number1(calculations.actualSolarKw)} kW`} />
-          <Row label="Battery type" value={input.batteryName} />
-          <Row label="Battery modules" value={input.batteryName === "No Battery" ? "0" : String(input.batteryModules)} />
+          <Row label="Battery items" value={batterySummary} />
           <Row label="Battery kWh" value={`${number1(calculations.batterySizeKwh)} kWh`} />
           <Row label="Inverter type" value={input.inverterType} />
           <Row label="Phase" value={input.phase} />
