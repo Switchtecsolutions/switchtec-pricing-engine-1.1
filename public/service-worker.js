@@ -1,4 +1,4 @@
-const CACHE_NAME = "switchtec-pricing-engine-v1";
+const CACHE_NAME = "switchtec-pricing-engine-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -30,6 +30,19 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
+
+  if (request.mode === "navigate" || request.destination === "document") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          return response;
+        })
+        .catch(() => caches.match("./index.html").then((cached) => cached || caches.match("./")))
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(request).then((cached) => {
